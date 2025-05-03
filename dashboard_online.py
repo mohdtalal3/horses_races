@@ -18,106 +18,127 @@ st.set_page_config(
 FILE_ID = "1VGY4hMY1RJpEh4Hqs_qL_ci9Hp2bkW37"  # Updated to your actual file ID
 DB_FILE = "horse_races1.db"
 
-@st.cache_data
+# Remove the cache decorator from the download function
 def download_db():
-    if not os.path.exists(DB_FILE):
-        with st.status("Downloading database from Google Drive...", expanded=True) as status:
-            try:
-                # Step 1: Get the warning page first
-                session = requests.Session()
-                url = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
-                st.info(f"Attempting to download from: {url}")
+    # Check if file exists FIRST before doing any Streamlit operations
+    # This helps prevent unnecessary downloads
+    if os.path.exists(DB_FILE):
+        return DB_FILE
+        
+    # If file doesn't exist, proceed with download
+    with st.status("Downloading database from Google Drive...", expanded=True) as status:
+        try:
+            # Step 1: Get the warning page first
+            session = requests.Session()
+            url = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
+            st.info(f"Attempting to download from: {url}")
+            
+            # Get the initial response which may contain the virus warning
+            response = session.get(url)
+            
+            # Check if we got the virus scan warning page
+            if 'Google Drive can\'t scan this file for viruses' in response.text:
+                st.info("File is large - processing virus scan bypass...")
                 
-                # Get the initial response which may contain the virus warning
-                response = session.get(url)
-                
-                # Check if we got the virus scan warning page
-                if 'Google Drive can\'t scan this file for viruses' in response.text:
-                    st.info("File is large - processing virus scan bypass...")
-                    
-                    # Extract the download form action and parameters
-                    confirm_match = re.search(r'confirm=([^&"\']+)', response.text)
-                    if confirm_match:
-                        confirm = confirm_match.group(1)
-                        direct_url = f"https://drive.usercontent.google.com/download?id={FILE_ID}&export=download&confirm={confirm}"
-                        st.info(f"Using direct download URL with confirmation token")
-                    else:
-                        # Alternative approach if regex fails
-                        st.info("Using alternative download method")
-                        direct_url = f"https://drive.google.com/uc?export=download&id={FILE_ID}&confirm=t"
-                    
-                    # Download the actual file with the confirmation token
-                    response = session.get(direct_url, stream=True)
+                # Extract the download form action and parameters
+                confirm_match = re.search(r'confirm=([^&"\']+)', response.text)
+                if confirm_match:
+                    confirm = confirm_match.group(1)
+                    direct_url = f"https://drive.usercontent.google.com/download?id={FILE_ID}&export=download&confirm={confirm}"
+                    st.info(f"Using direct download URL with confirmation token")
                 else:
-                    # If no warning, we already have the file in the response
-                    st.info("Direct download")
+                    # Alternative approach if regex fails
+                    st.info("Using alternative download method")
+                    direct_url = f"https://drive.google.com/uc?export=download&id={FILE_ID}&confirm=t"
                 
-                # Check if we still got HTML instead of the database file
-                content_type = response.headers.get('Content-Type', '')
-                if 'text/html' in content_type or response.text.startswith('<!DOCTYPE html>'):
-                    # One more attempt with a different URL pattern
-                    st.warning("Received HTML instead of a file. Trying alternative download method...")
-                    
-                    # Try the alternative download URL format that sometimes works for large files
-                    alt_url = f"https://drive.google.com/uc?id={FILE_ID}&export=download&confirm=t&uuid=12345"
-                    response = session.get(alt_url, stream=True)
-                    
-                    # If still HTML, one more attempt with the usercontent domain
-                    if 'text/html' in response.headers.get('Content-Type', ''):
-                        final_url = f"https://drive.usercontent.google.com/download?id={FILE_ID}&export=download&confirm=t"
-                        response = session.get(final_url, stream=True)
+                # Download the actual file with the confirmation token
+                response = session.get(direct_url, stream=True)
+            else:
+                # If no warning, we already have the file in the response
+                st.info("Direct download")
+            
+            # Check if we still got HTML instead of the database file
+            content_type = response.headers.get('Content-Type', '')
+            if 'text/html' in content_type or (not response.headers.get('Content-Disposition') and len(response.content) < 1000000):
+                # One more attempt with a different URL pattern
+                st.warning("Received HTML instead of a file. Trying alternative download method...")
                 
-                if response.status_code != 200:
-                    st.error(f"Download failed with status code: {response.status_code}")
-                    st.stop()
+                # Try the alternative download URL format that sometimes works for large files
+                alt_url = f"https://drive.google.com/uc?id={FILE_ID}&export=download&confirm=t&uuid=12345"
+                response = session.get(alt_url, stream=True)
                 
-                # Check if the response is still HTML
-                if response.headers.get('Content-Type', '').startswith('text/html'):
-                    # Display download instructions for manual download
-                    st.error("Automatic download failed. Please download the file manually:")
-                    st.markdown(f"1. [Open this link](https://drive.google.com/file/d/{FILE_ID}/view?usp=sharing)")
-                    st.markdown("2. Click 'Download' button at the top of the page")
-                    st.markdown(f"3. Save the file as '{DB_FILE}' in the same folder as this script")
-                    st.markdown("4. Refresh this page")
-                    st.stop()
-                
-                # Download the file
-                total_size = int(response.headers.get('content-length', 0))
-                block_size = 8192  # Increased block size for faster downloads
-                progress_bar = st.progress(0)
-                
-                with open(DB_FILE, "wb") as f:
-                    dl = 0
-                    for data in response.iter_content(block_size):
-                        dl += len(data)
-                        f.write(data)
-                        if total_size > 0:
-                            progress = min(dl / total_size, 1.0)
-                            progress_bar.progress(progress)
-                
-                # Verify the downloaded file is actually a SQLite database
-                try:
-                    test_conn = sqlite3.connect(DB_FILE)
-                    test_conn.execute("PRAGMA integrity_check")
-                    test_conn.close()
-                except sqlite3.Error:
-                    st.error("The downloaded file is not a valid SQLite database. It may be corrupted or the wrong file.")
-                    if os.path.exists(DB_FILE):
-                        os.remove(DB_FILE)
-                    st.stop()
-                
-                status.update(label="Database downloaded successfully!", state="complete")
-                st.success(f"Database saved to {DB_FILE}")
-            except Exception as e:
-                st.error(f"Error downloading database: {e}")
+                # If still HTML, one more attempt with the usercontent domain
+                if 'text/html' in response.headers.get('Content-Type', ''):
+                    final_url = f"https://drive.usercontent.google.com/download?id={FILE_ID}&export=download&confirm=t"
+                    response = session.get(final_url, stream=True)
+            
+            if response.status_code != 200:
+                st.error(f"Download failed with status code: {response.status_code}")
+                st.stop()
+            
+            # Check if the response is still HTML
+            if response.headers.get('Content-Type', '').startswith('text/html'):
+                # Display download instructions for manual download
+                st.error("Automatic download failed. Please download the file manually:")
+                st.markdown(f"1. [Open this link](https://drive.google.com/file/d/{FILE_ID}/view?usp=sharing)")
+                st.markdown("2. Click 'Download' button at the top of the page")
+                st.markdown(f"3. Save the file as '{DB_FILE}' in the same folder as this script")
+                st.markdown("4. Refresh this page")
+                st.stop()
+            
+            # Download the file
+            total_size = int(response.headers.get('content-length', 0))
+            block_size = 8192  # Increased block size for faster downloads
+            progress_bar = st.progress(0)
+            
+            with open(DB_FILE, "wb") as f:
+                dl = 0
+                for data in response.iter_content(block_size):
+                    dl += len(data)
+                    f.write(data)
+                    if total_size > 0:
+                        progress = min(dl / total_size, 1.0)
+                        progress_bar.progress(progress)
+            
+            # Verify the downloaded file is actually a SQLite database
+            try:
+                test_conn = sqlite3.connect(DB_FILE)
+                test_conn.execute("PRAGMA integrity_check")
+                test_conn.close()
+            except sqlite3.Error:
+                st.error("The downloaded file is not a valid SQLite database. It may be corrupted or the wrong file.")
                 if os.path.exists(DB_FILE):
                     os.remove(DB_FILE)
                 st.stop()
-    
+            
+            status.update(label="Database downloaded successfully!", state="complete")
+            st.success(f"Database saved to {DB_FILE}")
+        except Exception as e:
+            st.error(f"Error downloading database: {e}")
+            if os.path.exists(DB_FILE):
+                os.remove(DB_FILE)
+            st.stop()
+
     return DB_FILE
 
-# Check for and download the database file
-db_path = download_db()
+# Create a persistent flag in session state to track if we've checked for the database
+if 'db_checked' not in st.session_state:
+    st.session_state.db_checked = False
+    
+# Check for and download the database file only once per session
+if not st.session_state.db_checked:
+    # First check if the file exists without any Streamlit operations
+    if not os.path.exists(DB_FILE):
+        db_path = download_db()
+    else:
+        db_path = DB_FILE
+        st.sidebar.success(f"Using existing database: {DB_FILE}")
+    
+    st.session_state.db_path = db_path
+    st.session_state.db_checked = True
+else:
+    db_path = st.session_state.db_path
+
 if not os.path.exists(db_path):
     st.error(f"Database file '{db_path}' not found and couldn't be downloaded.")
     st.stop()
@@ -151,7 +172,8 @@ except Exception as e:
         # Option to delete corrupted file
         if st.button("Delete corrupted file and try again"):
             os.remove(db_path)
-            st.rerun()
+            st.session_state.db_checked = False  # Reset the check flag
+            st.experimental_rerun()
     
     st.stop()
 
@@ -411,8 +433,19 @@ st.sidebar.markdown("---")
 st.sidebar.caption("Horse Racing Dashboard - Data Analytics Tool")
 st.sidebar.info(f"Viewing data for: {selected_horse}")
 
-# Add database info
+# Add database info and reset option in the sidebar
 st.sidebar.markdown("---")
+st.sidebar.subheader("Database Options")
+
+# Add a "Force Redownload" checkbox
+if st.sidebar.checkbox("Force redownload database", help="Check this box to delete and redownload the database"):
+    if os.path.exists(DB_FILE):
+        os.remove(DB_FILE)
+        st.session_state.db_checked = False  # Reset the check flag
+        st.sidebar.success("Database deleted. Refresh the page to download again.")
+        st.sidebar.button("Refresh Page")
+
+# Database info
 if st.sidebar.checkbox("Show database info"):
     try:
         conn = sqlite3.connect(db_path)
@@ -435,5 +468,10 @@ if st.sidebar.checkbox("Show database info"):
         if os.path.exists(DB_FILE):
             size_mb = os.path.getsize(DB_FILE) / (1024 * 1024)
             st.sidebar.write(f"Database size: {size_mb:.2f} MB")
+            
+            # Show when the file was last modified
+            mod_time = os.path.getmtime(DB_FILE)
+            mod_time_str = datetime.datetime.fromtimestamp(mod_time).strftime('%Y-%m-%d %H:%M:%S')
+            st.sidebar.write(f"Last modified: {mod_time_str}")
     except Exception as e:
         st.sidebar.error(f"Error getting database info: {e}") 
