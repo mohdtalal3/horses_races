@@ -151,7 +151,7 @@ except Exception as e:
         # Option to delete corrupted file
         if st.button("Delete corrupted file and try again"):
             os.remove(db_path)
-            st.experimental_rerun()
+            st.rerun()
     
     st.stop()
 
