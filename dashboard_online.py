@@ -16,7 +16,7 @@ st.set_page_config(
 
 # === Google Drive Setup ===
 FILE_ID = "1VGY4hMY1RJpEh4Hqs_qL_ci9Hp2bkW37"  # Updated to your actual file ID
-DB_FILE = "horse_races.db"
+DB_FILE = "horse_races1.db"
 
 @st.cache_data
 def download_db():
